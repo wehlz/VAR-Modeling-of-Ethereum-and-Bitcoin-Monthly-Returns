@@ -1,0 +1,268 @@
+---
+title: "Project Report (Time Series)"
+author: "Zachary Wehlie"
+date: "2026-05-05"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = TRUE, fig.width = 8, fig.height = 5, fig.align = "center")
+```
+
+## Introduction:
+
+The goal of this project is to look at the relationship between Ethereum and Bitcoin's monthly prices in 2025 using Vector Autoregression (VAR) modeling. This project aims to determine whether Bitcoin price movements Granger-cause Ethereum returns, how each cryptocurrency responds to shocks in the other, and what proportion of Ethereum's price variation can be explained by Bitcoin.
+
+Surprisingly, there are moments where when one cryptocurrency goes down, the other's prices follow suit despite no central authority linking them so their movements appear to emerge purely from market behavior. The research question is; To what extent does Bitcoin's price movements affect Ethereum's returns, and is there evidence of a predictive relationship between the two cryptocurrencies specifically in the year 2025?
+
+## Data Description:
+
+The data used in this project consists of monthly closing prices for Ethereum and Bitcoin retrieved from Yahoo Finance using the quantmod package in R. The sample covers January 2020 through December 2025 particularly for the VAR Model with 70 monthly observations for each cryptocurrency after computing log returns. For the other models 11 observations were used from 2025. Log returns were calculated by taking the first difference of the natural log of monthly closing prices and multiplying by 100 to express returns as percentages. Ethereum had a mean monthly return of 3.95% with a standard deviation of 23.7% and returns ranging from -59.9% to +57.8%. Bitcoin had a mean monthly return of 3.15% with a standard deviation of 17.95% and returns ranging from -47.4% to +39.1%. The correlation between the two return series was 0.765, indicating a strong positive co-movement between the two cryptocurrencies over the sample period.
+
+## Statistical Methods:
+
+Monthly closing prices for both Ethereum (ETH-USD) and Bitcoin (BTC-USD) were pulled directly from Yahoo Finance for the 2020-2025 calendar year using the quantmod package in R. Log returns were then calculated to ensure stationarity, and Augmented Dickey-Fuller (ADF) tests were applied to both return series to confirm this before fitting the VAR model. If either series was found to be non-stationary it would be differenced until it passed the test. The optimal lag order for the VAR model was selected using BIC (SC) as the information criteria to avoid overfitting, which was especially important given the limited number of monthly observations available for 2025.
+
+A bivariate VAR model was then fit using the selected lag order with ETH and BTC monthly log returns as the endogenous variables. The coefficients were examined to understand how past values of each series predict the other. Granger causality tests were performed in both directions to determine whether Bitcoin leads Ethereum or vice versa. Impulse response functions were computed to trace how a one standard deviation shock to Bitcoin returns affects Ethereum over the following 6 months and the same was done in reverse. Finally variance decomposition was used to quantify how much of Ethereum's forecast error variance is explained by Bitcoin shocks versus its own past values, and a 3-month ahead forecast was generated for both cryptocurrencies using the fitted VAR model.
+
+## Results and Forecasting:
+
+#### Load Datasets:
+
+```{r}
+library(quantmod)
+library(vars)
+library(tseries)
+library(urca)
+
+#load data
+getSymbols("ETH-USD", src = "yahoo", from = "2025-01-01", to = "2025-12-31")
+getSymbols("BTC-USD", src = "yahoo", from = "2025-01-01", to = "2025-12-31")
+
+#monthly closing prices
+eth_monthly <- to.monthly(Cl(`ETH-USD`), indexAt = "lastof")[, 4]
+btc_monthly <- to.monthly(Cl(`BTC-USD`), indexAt = "lastof")[, 4]
+
+#log returns
+eth_ret <- na.omit(diff(log(eth_monthly))) * 100
+btc_ret <- na.omit(diff(log(btc_monthly))) * 100
+
+colnames(eth_ret) <- "ETH"
+colnames(btc_ret) <- "BTC"
+
+cat("=== ETH Monthly Returns ===\n")
+print(eth_ret)
+
+cat("=== BTC Monthly Returns ===\n")
+print(btc_ret)
+
+cat("=== Summary: ETH ===\n")
+print(summary(as.numeric(eth_ret)))
+
+cat("=== Summary: BTC ===\n")
+print(summary(as.numeric(btc_ret)))
+```
+
+The data loaded successfully with 11 monthly observations for both ETH and BTC from February through December 2025. Ethereum was notably more volatile, with monthly returns ranging from -38.8% to +39.7% and an average of -0.96% per month. Bitcoin was more stable, ranging from -19.4% to +13.2% with an average of -1.43% per month. The difference in volatility between the two sets up an interesting relationship for the VAR analysis to look into.
+
+#### Prices and Returns Plot:
+
+```{r}
+par(mfrow = c(2, 2))
+
+# Raw monthly prices
+plot(as.numeric(eth_monthly), main = "ETH Monthly Closing Price (2025)",
+     ylab = "USD", col = "purple", lwd = 2, type = "l",
+     xlab = "Month")
+
+plot(as.numeric(btc_monthly), main = "BTC Monthly Closing Price (2025)",
+     ylab = "USD", col = "darkorange", lwd = 2, type = "l",
+     xlab = "Month")
+
+# Log returns
+plot(as.numeric(eth_ret), main = "ETH Monthly Log Returns (2025)",
+     ylab = "%", col = "purple", lwd = 2, type = "l",
+     xlab = "Month")
+abline(h = 0, col = "red", lty = 2)
+
+plot(as.numeric(btc_ret), main = "BTC Monthly Log Returns (2025)",
+     ylab = "%", col = "darkorange", lwd = 2, type = "l",
+     xlab = "Month")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+The plots show both ETH and BTC monthly closing prices and log returns from 2020 through December 2025. ETH was significantly more volatile than BTC with a standard deviation of 23.7% compared to BTC's 17.9%, and monthly returns ranging from -59.9% to +57.8% versus BTC's -47.4% to +39.1%.
+
+Despite the difference in volatility, both cryptocurrencies move together quite closely with a correlation of 0.765, meaning when Bitcoin goes up Ethereum tends to follow and vice versa. This high correlation sets the foundation for the VAR analysis which will formally test whether Bitcoin movements actually predict Ethereum returns or if they simply move together by coincidence.
+
+#### Stationarity Test:
+
+```{r}
+cat("=== ADF Tests ===\n")
+adf_eth <- adf.test(as.numeric(eth_ret))
+adf_btc <- adf.test(as.numeric(btc_ret))
+
+cat("ETH -> p-value:", round(adf_eth$p.value, 4),
+    ifelse(adf_eth$p.value < 0.05, "(Stationary)", "(Non-stationary)"), "\n")
+cat("BTC -> p-value:", round(adf_btc$p.value, 4),
+    ifelse(adf_btc$p.value < 0.05, "(Stationary)", "(Non-stationary)"), "\n")
+```
+
+The ADF test shows mixed results for the two series. BTC monthly log returns are stationary with a p-value of 0.015, meaning we can reject the null hypothesis of a unit root. ETH however comes back as non-stationary with a p-value of 0.4385, which isnt expected since log returns are typically stationary. This is likely due to the limited number of observations available which reduces the power of the ADF test. For this to be addressed this ETH will be differenced before fitting the VAR model to ensure both series are stationary and the model results are reliable.
+
+#### VAR estimation and Granger causality:
+
+```{r}
+library(quantmod)
+library(vars)
+library(tseries)
+
+getSymbols("ETH-USD", src = "yahoo", from = "2020-01-01", to = "2025-12-31")
+getSymbols("BTC-USD", src = "yahoo", from = "2020-01-01", to = "2025-12-31")
+
+# Monthly closing prices
+eth_monthly <- to.monthly(Cl(`ETH-USD`), indexAt = "lastof")[, 4]
+btc_monthly <- to.monthly(Cl(`BTC-USD`), indexAt = "lastof")[, 4]
+
+# Log returns
+eth_ret <- na.omit(diff(log(eth_monthly))) * 100
+btc_ret <- na.omit(diff(log(btc_monthly))) * 100
+
+# Combine for VAR
+var_data <- na.omit(merge(eth_ret, btc_ret))
+colnames(var_data) <- c("ETH", "BTC")
+var_data <- as.data.frame(var_data)
+
+# Lag selection
+lag_select <- VARselect(var_data, lag.max = 4, type = "const")
+cat("=== Lag Selection ===\n")
+print(lag_select$selection)
+
+# Fit VAR
+p_opt   <- lag_select$selection["SC(n)"]
+var_fit <- VAR(var_data, p = max(p_opt, 1), type = "const")
+
+cat("=== VAR Summary ===\n")
+summary(var_fit)
+
+# Granger causality
+cat("=== Does BTC Granger-cause ETH? ===\n")
+causality(var_fit, cause = "BTC")
+
+cat("=== Does ETH Granger-cause BTC? ===\n")
+causality(var_fit, cause = "ETH")
+
+# Variance Decomposition
+vd <- fevd(var_fit, n.ahead = 6)
+plot(vd)
+
+cat("=== Variance Decomposition: ETH ===\n")
+print(round(vd$ETH, 4))
+
+cat("=== Variance Decomposition: BTC ===\n")
+print(round(vd$BTC, 4))
+```
+
+The VAR model selected a lag order of 1 using BIC. The key finding is that BTC.l1 is positive and significant (estimate = 0.740, p = 0.002), meaning a 1% increase in Bitcoin returns last month is associated with a 0.740% increase in Ethereum returns this month.
+
+The Granger causality tests further confirm this relationship in both directions. BTC Granger-causes ETH (F = 10.06, p = 0.002) and ETH Granger-causes BTC (F = 6.80, p = 0.010), meaning both cryptocurrencies have predictive power over each other. The instantaneous causality test also strongly rejects its null (p = 5.1e-07), confirming they move together within the same month as well.
+
+#### Impulse Response Analysis:
+
+```{r}
+par(mfrow = c(1, 2))
+
+# ETH response to BTC shock
+irf_btc_eth <- irf(var_fit,
+                   impulse  = "BTC",
+                   response = "ETH",
+                   n.ahead  = 6,
+                   boot     = TRUE,
+                   ci       = 0.95)
+plot(irf_btc_eth, main = "ETH Response to BTC Shock")
+
+# BTC response to ETH shock
+irf_eth_btc <- irf(var_fit,
+                   impulse  = "ETH",
+                   response = "BTC",
+                   n.ahead  = 6,
+                   boot     = TRUE,
+                   ci       = 0.95)
+plot(irf_eth_btc, main = "BTC Response to ETH Shock")
+
+par(mfrow = c(1, 1))
+```
+
+A positive shock to Bitcoin leads to a peak response in Ethereum of around +8% at month 2 before fading to zero by month 3. Similarly a shock to Ethereum causes Bitcoin to peak at around +12% at month 1 and return to zero by month 3. Both effects are short lived suggesting that while the two cryptocurrencies influence each other the impact is temporary.
+
+#### Variance Decomposition:
+
+```{r}
+vd <- fevd(var_fit, n.ahead = 6)
+plot(vd, main = "Forecast Error Variance Decomposition")
+
+cat("=== Variance Decomposition: ETH ===\n")
+print(round(vd$ETH, 4))
+
+cat("=== Variance Decomposition: BTC ===\n")
+print(round(vd$BTC, 4))
+```
+
+The variance decomposition shows that Ethereum is mostly driven by its own past movements with Bitcoin playing a smaller role in explaining its variation. Bitcoin however tells a different story with Ethereum actually explaining more of Bitcoin's forecast uncertainty than Bitcoin's own past movements do. This suggests that despite Bitcoin being the larger and more established cryptocurrency, Ethereum has a surprisingly strong influence on where Bitcoin is headed.
+
+#### Forecast:
+
+```{r}
+eth_forecast <- predict(var_fit, n.ahead = 3)
+plot(eth_forecast, main = "3-Month Ahead Forecast")
+
+cat("=== 3-Month ETH Return Forecast ===\n")
+print(eth_forecast$fcst$ETH)
+
+cat("=== 3-Month BTC Return Forecast ===\n")
+print(eth_forecast$fcst$BTC)
+```
+
+The 3-month ahead forecast predicts modest positive returns for both ETH and BTC. ETH is forecast to return around +0.97% in month 1 rising to about +4.1% by month 3, while BTC is forecast at +1.75% in month 1 settling around +3.6% by month 3. However the confidence intervals are extremely wide for both with ETH's range spanning nearly 90 percentage points and BTC's nearly 70. This means there is very high uncertainty around these forecasts. This is typical for cryptocurrency returns which are highly volatile and difficult to predict with precision.
+
+#### MAE and RMSE:
+
+```{r}
+#forecast
+forecast_eth <- predict(var_fit, n.ahead = 3)
+forecast_btc <- predict(var_fit, n.ahead = 3)
+
+#Actual vs Predicted 
+eth_residuals <- residuals(var_fit)[, "ETH"]
+btc_residuals <- residuals(var_fit)[, "BTC"]
+
+#MAE and RMSE (ETH)
+mae_eth <- mean(abs(eth_residuals))
+rmse_eth <- sqrt(mean(eth_residuals^2))
+
+#MAE and RMSE (BTC)
+mae_btc <- mean(abs(btc_residuals))
+rmse_btc <- sqrt(mean(btc_residuals^2))
+
+cat("=== ETH Forecast Performance ===\n")
+cat("MAE:", round(mae_eth, 4), "\n")
+cat("RMSE:", round(rmse_eth, 4), "\n\n")
+
+cat("=== BTC Forecast Performance ===\n")
+cat("MAE:", round(mae_btc, 4), "\n")
+cat("RMSE:", round(rmse_btc, 4), "\n")
+```
+
+The forecast performance shows that the VAR model had a MAE of 17.35% and RMSE of 22.06% for Ethereum, meaning on average the model's ETH predictions were off by about 17% points. Bitcoin performed better with a MAE of 13.08% and RMSE of 16.86%, which makes sense since BTC was less volatile than ETH. The higher errors for ETH are consistent with its larger standard deviation and wider return swings observed in the data. These error values are large in absolute terms but are expected since cryptocurrencies are notoriously difficult to predict, and the wide forecast confidence intervals reflect this same uncertainty.
+
+## Conclusion:
+
+Overall the results suggest that Bitcoin and Ethereum have a bidirectional relationship. Bitcoin does influence Ethereum; a positive shock to BTC leads to a meaningful but short lived gain in ETH. The Granger causality test confirms BTC has predictive power over ETH. However the relationship is not one sided. Ethereum also influences Bitcoin and accounts for a surprisingly large portion of Bitcoin's forecast uncertainty, which challenges the common assumption that Bitcoin simply leads and Ethereum follows.
+
+Both cryptocurrencies move together quickly within the same month and any shock to either one fades out within about 3 months. The forecasts suggest slightly positive returns ahead for both but with extremely wide uncertainty bands, reflecting how unpredictable crypto markets are. Overall this analysis supports the idea that ETH and BTC are deeply intertwined and should not be looked at in isolation when analyzing the cryptocurrency market. Limitations for me during this project was definetly having only 11 observstions for some of the plots since I was particular looking at the last year but I did use 2020-2025 data for the VAR Model. For my future study I would look into datasets that range from the moment cryptocurrencies became more mainstream to today in order to get a more clear idea of how this started and delve deeper into why each of these coins effects the other's price.
+
+## References:
+
+1.) Yahoo Finance via quantmod R package — ETH-USD and BTC-USD monthly price data (2020-2025)
